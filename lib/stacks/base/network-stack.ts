@@ -60,6 +60,7 @@ export class NetworkStack extends NestedStack {
       allowAllOutbound: true,
     });
 
+    // Docker Swarm
     this.securityGroup.connections.allowFrom(this.securityGroup, Port.tcp(2377))
     this.securityGroup.connections.allowTo(this.securityGroup, Port.tcp(2377))
 
