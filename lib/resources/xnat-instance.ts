@@ -59,6 +59,7 @@ export class XnatInstance extends Construct {
         this.xnatInstance.instance.userData.addCommands(
             `USER_ID=$(id -g ec2-user)`,
             `GROUP_ID=$(getent group docker | cut -d: -f3)`,
+            // Only download xnat-docker-compose and setup if it doesn't already exist
             `[ ! -d ${xdcPath} ] && mkdir -p ${xdcPath} \
                                          && git clone -b features/jupyterhub ${xdcUrl} ${xdcPath} \
                                          && cp ${xdcPath}/linux.env ${xdcPath}/.env \
@@ -70,7 +71,12 @@ export class XnatInstance extends Construct {
 
         this.xnatInstance.instance.userData.addCommands(
             'docker pull jupyter/datascience-notebook:hub-3.0.0',
-            'docker pull xnat/scipy-notebook:0.2.0',
+            'docker pull xnat/datascience-notebook:latest',
+            'docker swarm init',
+            `docker swarm join-token worker | grep -oP "(?<=--token )[^ ]+" > ${xdcPath}/swarm-token`,
+            // in the background add a command to wait 10 minutes for the swarm nodes to join then add node labels to each worker node
+            // this is done in the background because the swarm nodes take a while to join and we don't want to block the rest of the userdata script
+            '(sleep 600 && docker node ls --filter "role=worker" --format "{{.ID}}" | xargs -I {} docker node update --label-add type=jupyter {} ) &',
         );
 
         let swarmNodes = []
@@ -94,7 +100,7 @@ export class XnatInstance extends Construct {
                 blockDevices: [
                     {
                         deviceName: '/dev/xvda',
-                        volume: ec2.BlockDeviceVolume.ebs(64, {
+                        volume: ec2.BlockDeviceVolume.ebs(48, {
                             deleteOnTermination: true,
                             volumeType: EbsDeviceVolumeType.GP2
                         }),
@@ -104,12 +110,13 @@ export class XnatInstance extends Construct {
 
             swarmNode.instance.userData.addCommands(
                 'docker pull jupyter/datascience-notebook:hub-3.0.0',
-                'docker pull xnat/scipy-notebook:0.2.0',
+                'docker pull xnat/datascience-notebook:latest',
+                `TOKEN=$(cat ${xdcPath}/swarm-token)`,
+                `docker swarm join --token $TOKEN ${this.xnatInstance.instance.instancePrivateIp}:2377`,
             );
 
+            swarmNode.node.addDependency(this.xnatInstance);
             swarmNodes.push(swarmNode);
-
-            // TODO: Docker swarm join command must be done manually for now
         }
 
     }
